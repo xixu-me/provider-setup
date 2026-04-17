@@ -1,4 +1,9 @@
 import pathlib
+import json
+import os
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 
@@ -35,6 +40,46 @@ class ConfigDirTests(unittest.TestCase):
 
         self.assertIn("`CODEX_HOME`", content)
         self.assertIn("`CLAUDE_CONFIG_DIR`", content)
+
+    def test_claude_ps1_preserves_existing_env_on_windows_powershell(self) -> None:
+        temp_dir = tempfile.mkdtemp(prefix="provider-setup-claude-")
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+
+        settings_file = pathlib.Path(temp_dir) / "settings.json"
+        settings_file.write_text(
+            json.dumps({"env": {"EXISTING": "1"}}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        env = os.environ.copy()
+        env["CLAUDE_CONFIG_DIR"] = temp_dir
+
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(REPO_ROOT / "claude.ps1"),
+                "-ApiKey",
+                "test-key",
+            ],
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(
+            completed.returncode,
+            0,
+            msg=f"stdout:\n{completed.stdout}\n\nstderr:\n{completed.stderr}",
+        )
+
+        data = json.loads(settings_file.read_text(encoding="utf-8-sig"))
+        self.assertEqual(data["env"]["EXISTING"], "1")
+        self.assertEqual(data["env"]["ANTHROPIC_AUTH_TOKEN"], "test-key")
 
 
 if __name__ == "__main__":

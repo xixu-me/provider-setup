@@ -2,6 +2,46 @@ param(
     [string]$ApiKey
 )
 
+function ConvertTo-Hashtable {
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        [object]$InputObject
+    )
+
+    if ($null -eq $InputObject) {
+        return $null
+    }
+
+    if ($InputObject -is [System.Collections.IDictionary]) {
+        $table = @{}
+        foreach ($key in $InputObject.Keys) {
+            $table[$key] = ConvertTo-Hashtable $InputObject[$key]
+        }
+        return $table
+    }
+
+    if (
+        $InputObject -is [System.Collections.IEnumerable] -and
+        -not ($InputObject -is [string])
+    ) {
+        $items = @()
+        foreach ($item in $InputObject) {
+            $items += ,(ConvertTo-Hashtable $item)
+        }
+        return $items
+    }
+
+    if ($InputObject -is [psobject]) {
+        $table = @{}
+        foreach ($property in $InputObject.PSObject.Properties) {
+            $table[$property.Name] = ConvertTo-Hashtable $property.Value
+        }
+        return $table
+    }
+
+    return $InputObject
+}
+
 if ([string]::IsNullOrWhiteSpace($ApiKey)) {
     $secure = Read-Host "请输入 API Key" -AsSecureString
     $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
@@ -27,19 +67,15 @@ $data = @{}
 if (Test-Path $SettingsFile) {
     $raw = Get-Content $SettingsFile -Raw -ErrorAction Stop
     if (-not [string]::IsNullOrWhiteSpace($raw)) {
-        $parsed = $raw | ConvertFrom-Json -Depth 100
-
-        $data = @{}
-        foreach ($p in $parsed.PSObject.Properties) {
-            $data[$p.Name] = $p.Value
-        }
+        $parsed = $raw | ConvertFrom-Json
+        $data = ConvertTo-Hashtable $parsed
     }
 }
 
-if ($data.ContainsKey("env") -and $null -ne $data["env"]) {
+if ($data.ContainsKey("env") -and $data["env"] -is [System.Collections.IDictionary]) {
     $envTable = @{}
-    foreach ($p in $data["env"].PSObject.Properties) {
-        $envTable[$p.Name] = $p.Value
+    foreach ($key in $data["env"].Keys) {
+        $envTable[$key] = $data["env"][$key]
     }
 } else {
     $envTable = @{}
