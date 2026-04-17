@@ -1,54 +1,64 @@
-$ClaudeDir = Join-Path $HOME ".claude"
-$SettingsFile = Join-Path $ClaudeDir "settings.json"
+param(
+    [string]$ApiKey
+)
 
-New-Item -ItemType Directory -Force -Path $ClaudeDir | Out-Null
-if (-not (Test-Path $SettingsFile)) {
-    Set-Content -Path $SettingsFile -Value '{}' -Encoding UTF8
-}
-
-$content = Get-Content $SettingsFile -Raw -ErrorAction Stop
-if ([string]::IsNullOrWhiteSpace($content)) {
-    $json = @{}
-} else {
+if ([string]::IsNullOrWhiteSpace($ApiKey)) {
+    $secure = Read-Host "请输入 API Key" -AsSecureString
+    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
     try {
-        $json = $content | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        $ApiKey = [Runtime.InteropServices.Marshal]::PtrToStringAuto($ptr)
     }
-    catch {
-        throw "错误：$SettingsFile 不是合法 JSON，无法自动修改。"
+    finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
     }
 }
 
-if ($null -eq $json) {
-    $json = @{}
+$SettingsDir = Join-Path $HOME ".claude"
+$SettingsFile = Join-Path $SettingsDir "settings.json"
+
+New-Item -ItemType Directory -Force -Path $SettingsDir | Out-Null
+
+$data = @{}
+
+if (Test-Path $SettingsFile) {
+    $raw = Get-Content $SettingsFile -Raw -ErrorAction Stop
+    if (-not [string]::IsNullOrWhiteSpace($raw)) {
+        $parsed = $raw | ConvertFrom-Json -Depth 100
+
+        $data = @{}
+        foreach ($p in $parsed.PSObject.Properties) {
+            $data[$p.Name] = $p.Value
+        }
+    }
 }
 
-if ($json.ContainsKey('env')) {
-    if ($json.env -isnot [System.Collections.IDictionary]) {
-        throw "错误：$SettingsFile 中的 env 字段不是 JSON 对象。"
-    }
-    $envMap = @{}
-    foreach ($key in $json.env.Keys) {
-        $envMap[$key] = [string]$json.env[$key]
+if ($data.ContainsKey("env") -and $null -ne $data["env"]) {
+    $envTable = @{}
+    foreach ($p in $data["env"].PSObject.Properties) {
+        $envTable[$p.Name] = $p.Value
     }
 } else {
-    $envMap = @{}
+    $envTable = @{}
 }
 
-$envMap['ANTHROPIC_AUTH_TOKEN'] = 'XIXU_API_KEY'
-$envMap['ANTHROPIC_BASE_URL'] = 'https://api.xi-xu.me'
-$envMap['ANTHROPIC_DEFAULT_HAIKU_MODEL'] = 'gpt-5.4'
-$envMap['ANTHROPIC_DEFAULT_OPUS_MODEL'] = 'gpt-5.4'
-$envMap['ANTHROPIC_DEFAULT_SONNET_MODEL'] = 'gpt-5.4'
-$envMap['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC'] = '1'
-$envMap['CLAUDE_CODE_SUBAGENT_MODEL'] = 'gpt-5.4'
+$envTable["ANTHROPIC_AUTH_TOKEN"] = $ApiKey
+$envTable["ANTHROPIC_BASE_URL"] = "https://api.xi-xu.me"
+$envTable["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = "gpt-5.4"
+$envTable["ANTHROPIC_DEFAULT_OPUS_MODEL"] = "gpt-5.4"
+$envTable["ANTHROPIC_DEFAULT_SONNET_MODEL"] = "gpt-5.4"
+$envTable["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
+$envTable["CLAUDE_CODE_SUBAGENT_MODEL"] = "gpt-5.4"
 
-$json['env'] = $envMap
+$data["env"] = $envTable
 
-$jsonText = $json | ConvertTo-Json -Depth 100
-Set-Content -Path $SettingsFile -Value $jsonText -Encoding UTF8
+if (Test-Path $SettingsFile) {
+    Copy-Item $SettingsFile "$SettingsFile.bak" -Force
+}
 
-Write-Host "已完成：更新 $SettingsFile"
-Write-Host "已写入/合并 env 配置："
-Write-Host "  - ANTHROPIC_AUTH_TOKEN = XIXU_API_KEY"
-Write-Host "  - ANTHROPIC_BASE_URL = https://api.xi-xu.me"
-Write-Host "  - 默认模型 = gpt-5.4"
+$json = $data | ConvertTo-Json -Depth 100
+Set-Content -Path $SettingsFile -Value $json -Encoding UTF8
+
+Write-Host "已更新: $SettingsFile"
+Write-Host "完成。"
+Write-Host "你可以执行以下命令查看结果："
+Write-Host "Get-Content $SettingsFile"
