@@ -30,34 +30,81 @@ if ($null -eq $content) {
     $content = ""
 }
 
-if ($content -match '(?m)^[ \t]*model_provider[ \t]*=') {
-    $content = [regex]::Replace(
-        $content,
-        '(?m)^[ \t]*model_provider[ \t]*=.*$',
-        'model_provider = "xixu"'
-    )
-} else {
-    if ($content.Length -gt 0 -and -not $content.EndsWith("`n")) {
-        $content += "`r`n"
+$content = $content -replace "`r`n", "`n"
+$lines = [System.Collections.Generic.List[string]]::new()
+if ($content.Length -gt 0) {
+    foreach ($line in ($content -split "`n")) {
+        $lines.Add($line)
     }
-    $content += 'model_provider = "xixu"' + "`r`n"
 }
 
-$content = [regex]::Replace(
-    $content,
-    '(?ms)^\[model_providers\.xixu\]\s*.*?(?=^\[|\z)',
-    ''
-)
+$filteredLines = [System.Collections.Generic.List[string]]::new()
+$inXixuBlock = $false
 
-$xixuBlock = @'
+foreach ($line in $lines) {
+    if ($inXixuBlock) {
+        if ($line -match '^\[.*\][ \t]*$') {
+            $inXixuBlock = $false
+        } else {
+            continue
+        }
+    }
 
-[model_providers.xixu]
-name = "Xi Xu's AI Inference"
-base_url = "https://api.xi-xu.me/v1"
-env_key = "XIXU_API_KEY"
-'@
+    if ($line -match '^[ \t]*model_provider[ \t]*=') {
+        continue
+    }
 
-$content = $content.TrimEnd() + "`r`n" + $xixuBlock + "`r`n"
+    if ($line -match '^\[model_providers\.xixu\][ \t]*$') {
+        $inXixuBlock = $true
+        continue
+    }
+
+    $filteredLines.Add($line)
+}
+
+$insertIndex = 0
+while (
+    $insertIndex -lt $filteredLines.Count -and (
+        $filteredLines[$insertIndex].Trim().Length -eq 0 -or
+        $filteredLines[$insertIndex].TrimStart().StartsWith("#")
+    )
+) {
+    $insertIndex++
+}
+
+$outputLines = [System.Collections.Generic.List[string]]::new()
+for ($i = 0; $i -lt $insertIndex; $i++) {
+    $outputLines.Add($filteredLines[$i])
+}
+
+if ($outputLines.Count -gt 0 -and $outputLines[$outputLines.Count - 1].Trim().Length -ne 0) {
+    $outputLines.Add("")
+}
+
+$outputLines.Add('model_provider = "xixu"')
+
+if ($insertIndex -lt $filteredLines.Count -and $filteredLines[$insertIndex].Trim().Length -ne 0) {
+    $outputLines.Add("")
+}
+
+for ($i = $insertIndex; $i -lt $filteredLines.Count; $i++) {
+    $outputLines.Add($filteredLines[$i])
+}
+
+while ($outputLines.Count -gt 0 -and $outputLines[$outputLines.Count - 1].Trim().Length -eq 0) {
+    $outputLines.RemoveAt($outputLines.Count - 1)
+}
+
+if ($outputLines.Count -gt 0) {
+    $outputLines.Add("")
+}
+
+$outputLines.Add('[model_providers.xixu]')
+$outputLines.Add('name = "Xi Xu''s AI Inference"')
+$outputLines.Add('base_url = "https://api.xi-xu.me/v1"')
+$outputLines.Add('env_key = "XIXU_API_KEY"')
+
+$content = [string]::Join("`r`n", $outputLines) + "`r`n"
 
 Set-Content -Path $ConfigFile -Value $content -Encoding UTF8
 

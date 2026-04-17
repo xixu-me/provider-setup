@@ -92,6 +92,60 @@ class ConfigDirTests(unittest.TestCase):
         self.assertEqual(data["env"]["EXISTING"], "1")
         self.assertEqual(data["env"]["ANTHROPIC_AUTH_TOKEN"], "test-key")
 
+    def test_codex_ps1_writes_model_provider_at_top_level(self) -> None:
+        temp_dir = tempfile.mkdtemp(prefix="provider-setup-codex-")
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+
+        config_file = pathlib.Path(temp_dir) / "config.toml"
+        config_file.write_text(
+            "\n".join(
+                [
+                    "# existing comment",
+                    "",
+                    "[projects.'E:\\\\github\\\\demo']",
+                    'trust_level = "trusted"',
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        env = os.environ.copy()
+        env["CODEX_HOME"] = temp_dir
+
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(REPO_ROOT / "codex.ps1"),
+                "-ApiKey",
+                "test-key",
+            ],
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(
+            completed.returncode,
+            0,
+            msg=f"stdout:\n{completed.stdout}\n\nstderr:\n{completed.stderr}",
+        )
+
+        content = config_file.read_text(encoding="utf-8-sig")
+        lines = content.splitlines()
+        non_empty_lines = [line for line in lines if line.strip()]
+
+        self.assertGreaterEqual(len(non_empty_lines), 4, content)
+        self.assertEqual(non_empty_lines[0], "# existing comment")
+        self.assertEqual(non_empty_lines[1], 'model_provider = "xixu"')
+        self.assertEqual(non_empty_lines[2], "[projects.'E:\\\\github\\\\demo']")
+        self.assertIn("[model_providers.xixu]", non_empty_lines)
+
 
 if __name__ == "__main__":
     unittest.main()

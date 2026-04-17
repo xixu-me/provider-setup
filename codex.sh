@@ -24,14 +24,17 @@ TMP_FILE="$(mktemp)"
 awk '
 BEGIN {
   in_xixu = 0
-  model_provider_written = 0
 }
 {
-  if ($0 ~ /^[[:space:]]*model_provider[[:space:]]*=/) {
-    if (!model_provider_written) {
-      print "model_provider = \"xixu\""
-      model_provider_written = 1
+  if (in_xixu) {
+    if ($0 ~ /^\[.*\][[:space:]]*$/) {
+      in_xixu = 0
+    } else {
+      next
     }
+  }
+
+  if ($0 ~ /^[[:space:]]*model_provider[[:space:]]*=/) {
     next
   }
 
@@ -40,18 +43,29 @@ BEGIN {
     next
   }
 
-  if (in_xixu && $0 ~ /^\[.*\][[:space:]]*$/) {
-    in_xixu = 0
-  }
-
-  if (!in_xixu) {
-    print $0
+  if (body_count == 0 && $0 ~ /^[[:space:]]*($|#)/) {
+    lead[++lead_count] = $0
+  } else {
+    body[++body_count] = $0
   }
 }
 END {
-  if (!model_provider_written) {
+  for (i = 1; i <= lead_count; i++) {
+    print lead[i]
+  }
+
+  if (lead_count > 0 && lead[lead_count] !~ /^[[:space:]]*$/) {
     print ""
-    print "model_provider = \"xixu\""
+  }
+
+  print "model_provider = \"xixu\""
+
+  if (body_count > 0 && body[1] !~ /^[[:space:]]*$/) {
+    print ""
+  }
+
+  for (i = 1; i <= body_count; i++) {
+    print body[i]
   }
 
   print ""
