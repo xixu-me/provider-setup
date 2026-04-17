@@ -1,46 +1,49 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CLAUDE_DIR="$HOME/.claude"
-SETTINGS_FILE="$CLAUDE_DIR/settings.json"
+# 用法:
+#   bash setup-claude-xixu.sh your_api_key
+# 或:
+#   ANTHROPIC_AUTH_TOKEN=your_api_key bash setup-claude-xixu.sh
 
-mkdir -p "$CLAUDE_DIR"
-if [[ ! -f "$SETTINGS_FILE" ]]; then
-  printf '{}\n' > "$SETTINGS_FILE"
+API_KEY="${1:-${ANTHROPIC_AUTH_TOKEN:-}}"
+
+if [[ -z "$API_KEY" ]]; then
+  read -rsp "请输入 API Key: " API_KEY
+  echo
 fi
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "错误：需要 python3 来安全更新 JSON 文件。" >&2
-  exit 1
-fi
+SETTINGS_DIR="$HOME/.claude"
+SETTINGS_FILE="$SETTINGS_DIR/settings.json"
 
-python3 - "$SETTINGS_FILE" <<'PY'
+mkdir -p "$SETTINGS_DIR"
+
+python3 - "$SETTINGS_FILE" "$API_KEY" <<'PY'
 import json
+import os
 import sys
-from pathlib import Path
 
-settings_path = Path(sys.argv[1])
-raw = settings_path.read_text(encoding='utf-8').strip()
+settings_file = sys.argv[1]
+api_key = sys.argv[2]
 
-if not raw:
-    data = {}
-else:
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise SystemExit(f"错误：{settings_path} 不是合法 JSON，无法自动修改。\n{e}")
+data = {}
+if os.path.exists(settings_file):
+    with open(settings_file, "r", encoding="utf-8") as f:
+        content = f.read().strip()
+        if content:
+            data = json.loads(content)
 
 if not isinstance(data, dict):
-    raise SystemExit(f"错误：{settings_path} 顶层必须是 JSON 对象。")
+    raise SystemExit("settings.json 顶层必须是 JSON 对象")
 
 env = data.get("env")
 if env is None:
     env = {}
 elif not isinstance(env, dict):
-    raise SystemExit(f"错误：{settings_path} 中的 env 字段不是 JSON 对象。")
+    raise SystemExit("settings.json 中 env 必须是 JSON 对象")
 
 env.update({
-    "ANTHROPIC_AUTH_TOKEN": "XIXU_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN": api_key,
     "ANTHROPIC_BASE_URL": "https://api.xi-xu.me",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-5.4",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "gpt-5.4",
@@ -50,11 +53,20 @@ env.update({
 })
 
 data["env"] = env
-settings_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding='utf-8')
+
+if os.path.exists(settings_file):
+    backup_file = settings_file + ".bak"
+    with open(backup_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+
+with open(settings_file, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+
+print(f"已更新: {settings_file}")
 PY
 
-echo "已完成：更新 $SETTINGS_FILE"
-echo "已写入/合并 .env 配置："
-echo "  - ANTHROPIC_AUTH_TOKEN = XIXU_API_KEY"
-echo "  - ANTHROPIC_BASE_URL = https://api.xi-xu.me"
-echo "  - 默认模型 = gpt-5.4"
+echo "完成。"
+echo "你可以执行以下命令查看结果："
+echo "cat \"$SETTINGS_FILE\""
