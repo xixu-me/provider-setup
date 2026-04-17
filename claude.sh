@@ -13,7 +13,7 @@ if [[ -z "$API_KEY" ]]; then
   echo
 fi
 
-SETTINGS_DIR="$HOME/.claude"
+SETTINGS_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SETTINGS_FILE="$SETTINGS_DIR/settings.json"
 
 mkdir -p "$SETTINGS_DIR"

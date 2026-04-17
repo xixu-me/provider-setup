@@ -13,7 +13,11 @@ if ([string]::IsNullOrWhiteSpace($ApiKey)) {
     }
 }
 
-$ConfigDir = Join-Path $HOME ".codex"
+$ConfigDir = if ([string]::IsNullOrWhiteSpace($env:CODEX_HOME)) {
+    Join-Path $HOME ".codex"
+} else {
+    $env:CODEX_HOME
+}
 $ConfigFile = Join-Path $ConfigDir "config.toml"
 
 New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null

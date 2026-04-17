@@ -13,7 +13,11 @@ if ([string]::IsNullOrWhiteSpace($ApiKey)) {
     }
 }
 
-$SettingsDir = Join-Path $HOME ".claude"
+$SettingsDir = if ([string]::IsNullOrWhiteSpace($env:CLAUDE_CONFIG_DIR)) {
+    Join-Path $HOME ".claude"
+} else {
+    $env:CLAUDE_CONFIG_DIR
+}
 $SettingsFile = Join-Path $SettingsDir "settings.json"
 
 New-Item -ItemType Directory -Force -Path $SettingsDir | Out-Null

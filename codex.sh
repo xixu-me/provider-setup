@@ -13,7 +13,7 @@ if [[ -z "$API_KEY" ]]; then
   echo
 fi
 
-CONFIG_DIR="$HOME/.codex"
+CONFIG_DIR="${CODEX_HOME:-$HOME/.codex}"
 CONFIG_FILE="$CONFIG_DIR/config.toml"
 
 mkdir -p "$CONFIG_DIR"
