@@ -41,6 +41,17 @@ class ConfigDirTests(unittest.TestCase):
         self.assertIn("`CODEX_HOME`", content)
         self.assertIn("`CLAUDE_CONFIG_DIR`", content)
 
+    def test_shell_scripts_use_lf_line_endings(self) -> None:
+        for name in ("claude.sh", "codex.sh"):
+            with self.subTest(name=name):
+                content = (REPO_ROOT / name).read_bytes()
+                self.assertNotIn(b"\r\n", content)
+
+    def test_gitattributes_enforces_lf_for_shell_scripts(self) -> None:
+        content = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
+
+        self.assertIn("*.sh text eol=lf", content)
+
     def test_claude_ps1_preserves_existing_env_on_windows_powershell(self) -> None:
         temp_dir = tempfile.mkdtemp(prefix="provider-setup-claude-")
         self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
