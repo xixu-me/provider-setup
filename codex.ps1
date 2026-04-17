@@ -52,7 +52,7 @@ $content = [regex]::Replace(
 $xixuBlock = @'
 
 [model_providers.xixu]
-name = "Xi Xu''s AI Inference"
+name = "Xi Xu's AI Inference"
 base_url = "https://api.xi-xu.me/v1"
 env_key = "XIXU_API_KEY"
 '@
