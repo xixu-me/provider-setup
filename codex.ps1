@@ -3,7 +3,7 @@ param(
 )
 
 if ([string]::IsNullOrWhiteSpace($ApiKey)) {
-    $secure = Read-Host "请输入 XIXU_API_KEY" -AsSecureString
+    $secure = Read-Host "请输入 API Key" -AsSecureString
     $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
     try {
         $ApiKey = [Runtime.InteropServices.Marshal]::PtrToStringAuto($ptr)

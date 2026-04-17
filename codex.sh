@@ -9,7 +9,7 @@ set -euo pipefail
 API_KEY="${1:-${XIXU_API_KEY:-}}"
 
 if [[ -z "$API_KEY" ]]; then
-  read -rsp "请输入 XIXU_API_KEY: " API_KEY
+  read -rsp "请输入 API Key: " API_KEY
   echo
 fi
 
