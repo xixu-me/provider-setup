@@ -1,119 +1,161 @@
-param(
-    [string]$ApiKey
-)
+# Configure Codex CLI for Xi Xu's AI Inference on Windows.
+$ErrorActionPreference = 'Stop'
 
-if ([string]::IsNullOrWhiteSpace($ApiKey)) {
-    $secure = Read-Host "请输入 API Key" -AsSecureString
-    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+$brand = "Xi Xu's AI Inference"
+$providerId = 'xixu'
+$baseUrl = 'https://api.xi-xu.me/v1'
+$envKey = 'XIXU_API_KEY'
+$defaultModel = 'gpt-5.5'
+$timestamp = Get-Date -Format 'yyyyMMddHHmmss'
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+function Write-Utf8NoBom([string]$Path, [string]$Content) {
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Content, $encoding)
+}
+
+function Backup-File([string]$Path) {
+    if (Test-Path -LiteralPath $Path) {
+        Copy-Item -LiteralPath $Path -Destination "$Path.bak.$script:timestamp" -Force
+    }
+}
+
+$codexDir = Join-Path $HOME '.codex'
+$configFile = Join-Path $codexDir 'config.toml'
+$keyFile = Join-Path $codexDir 'xixu.key'
+New-Item -ItemType Directory -Path $codexDir -Force | Out-Null
+
+$secureKey = Read-Host 'Enter your Xi Xu API key' -AsSecureString
+$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey)
+try {
+    $apiKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+} finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+}
+if ([string]::IsNullOrWhiteSpace($apiKey)) {
+    throw 'API key is required.'
+}
+Write-Utf8NoBom $keyFile $apiKey
+$apiKey = $null
+
+if ($env:OS -eq 'Windows_NT') {
     try {
-        $ApiKey = [Runtime.InteropServices.Marshal]::PtrToStringAuto($ptr)
-    }
-    finally {
-        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+        $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        & icacls.exe $keyFile '/inheritance:r' '/grant:r' "*$sid`:(R,W)" | Out-Null
+    } catch {
+        Write-Warning "Could not restrict the key file ACL automatically: $($_.Exception.Message)"
     }
 }
 
-$ConfigDir = if ([string]::IsNullOrWhiteSpace($env:CODEX_HOME)) {
-    Join-Path $HOME ".codex"
+Backup-File $configFile
+$sourceLines = if (Test-Path -LiteralPath $configFile) {
+    [System.IO.File]::ReadAllLines($configFile)
 } else {
-    $env:CODEX_HOME
-}
-$ConfigFile = Join-Path $ConfigDir "config.toml"
-
-New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
-if (-not (Test-Path $ConfigFile)) {
-    New-Item -ItemType File -Force -Path $ConfigFile | Out-Null
+    @()
 }
 
-$content = Get-Content $ConfigFile -Raw -ErrorAction SilentlyContinue
-if ($null -eq $content) {
-    $content = ""
-}
-
-$content = $content -replace "`r`n", "`n"
-$lines = [System.Collections.Generic.List[string]]::new()
-if ($content.Length -gt 0) {
-    foreach ($line in ($content -split "`n")) {
-        $lines.Add($line)
-    }
-}
-
-$filteredLines = [System.Collections.Generic.List[string]]::new()
-$inXixuBlock = $false
-
-foreach ($line in $lines) {
-    if ($inXixuBlock) {
-        if ($line -match '^\[.*\][ \t]*$') {
-            $inXixuBlock = $false
-        } else {
-            continue
-        }
-    }
-
-    if ($line -match '^[ \t]*model_provider[ \t]*=') {
+$kept = New-Object 'System.Collections.Generic.List[string]'
+$skipProvider = $false
+$inTable = $false
+foreach ($line in $sourceLines) {
+    if ($line -match '^\s*\[model_providers\.xixu\]\s*$') {
+        $skipProvider = $true
         continue
     }
-
-    if ($line -match '^\[model_providers\.xixu\][ \t]*$') {
-        $inXixuBlock = $true
+    if ($line -match '^\s*\[') {
+        $skipProvider = $false
+        $inTable = $true
+    }
+    if ($skipProvider) { continue }
+    if (-not $inTable -and $line -match '^\s*(model_provider|model|model_reasoning_effort|service_tier|approval_policy|approvals_reviewer)\s*=') {
         continue
     }
-
-    $filteredLines.Add($line)
+    $kept.Add($line)
 }
 
-$insertIndex = 0
-while (
-    $insertIndex -lt $filteredLines.Count -and (
-        $filteredLines[$insertIndex].Trim().Length -eq 0 -or
-        $filteredLines[$insertIndex].TrimStart().StartsWith("#")
-    )
-) {
-    $insertIndex++
+$firstTable = -1
+for ($i = 0; $i -lt $kept.Count; $i++) {
+    if ($kept[$i] -match '^\s*\[') {
+        $firstTable = $i
+        break
+    }
+}
+if ($firstTable -ge 0) {
+    $topText = (($kept.GetRange(0, $firstTable).ToArray() -join "`n").Trim())
+    $restText = (($kept.GetRange($firstTable, $kept.Count - $firstTable).ToArray() -join "`n").Trim())
+} else {
+    $topText = (($kept.ToArray() -join "`n").Trim())
+    $restText = ''
 }
 
-$outputLines = [System.Collections.Generic.List[string]]::new()
-for ($i = 0; $i -lt $insertIndex; $i++) {
-    $outputLines.Add($filteredLines[$i])
+$configText = @"
+model_provider = "$providerId"
+model = "$defaultModel"
+model_reasoning_effort = "xhigh"
+service_tier = "fast"
+approvals_reviewer = "user"
+"@.Trim()
+if ($topText) { $configText += "`n`n$topText" }
+$configText += @"
+
+
+[model_providers.$providerId]
+name = "$brand"
+base_url = "$baseUrl"
+env_key = "$envKey"
+wire_api = "responses"
+disable_response_storage = true
+"@
+if ($restText) { $configText += "`n$restText`n" }
+Write-Utf8NoBom $configFile $configText
+
+$profileFile = $PROFILE
+$profileDir = Split-Path -Parent $profileFile
+New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+if (-not (Test-Path -LiteralPath $profileFile)) { Write-Utf8NoBom $profileFile '' }
+Backup-File $profileFile
+
+$start = "# >>> Xi Xu's AI Inference Codex >>>"
+$end = "# <<< Xi Xu's AI Inference Codex <<<"
+$profileText = [System.IO.File]::ReadAllText($profileFile)
+$pattern = "(?ms)^$([regex]::Escape($start))\r?\n.*?^$([regex]::Escape($end))\r?\n?"
+$profileText = [regex]::Replace($profileText, $pattern, '').TrimEnd()
+$profileBlock = @'
+# >>> Xi Xu's AI Inference Codex >>>
+Remove-Item Function:\codex -ErrorAction SilentlyContinue
+$script:XiXuCodexCommand = Get-Command codex -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+
+function global:codex {
+    Write-Host "`nXi Xu's AI Inference"
+    Write-Host '----------------------'
+    if (-not $script:XiXuCodexCommand) {
+        Write-Error 'Codex CLI not found. Install Codex CLI first, then restart PowerShell.'
+        return
+    }
+    $keyPath = Join-Path $HOME '.codex\xixu.key'
+    if (-not (Test-Path -LiteralPath $keyPath)) {
+        Write-Error "Missing $keyPath. Run the setup script again."
+        return
+    }
+    $key = [System.IO.File]::ReadAllText($keyPath).Trim()
+    $hadKey = Test-Path Env:XIXU_API_KEY
+    $oldKey = $env:XIXU_API_KEY
+    try {
+        $env:XIXU_API_KEY = $key
+        & $script:XiXuCodexCommand.Source @args
+    } finally {
+        if ($hadKey) { $env:XIXU_API_KEY = $oldKey } else { Remove-Item Env:XIXU_API_KEY -ErrorAction SilentlyContinue }
+        $key = $null
+    }
 }
+# <<< Xi Xu's AI Inference Codex <<<
+'@
+$newProfile = if ($profileText) { "$profileText`r`n`r`n$profileBlock`r`n" } else { "$profileBlock`r`n" }
+Write-Utf8NoBom $profileFile $newProfile
 
-if ($outputLines.Count -gt 0 -and $outputLines[$outputLines.Count - 1].Trim().Length -ne 0) {
-    $outputLines.Add("")
-}
-
-$outputLines.Add('model_provider = "xixu"')
-
-if ($insertIndex -lt $filteredLines.Count -and $filteredLines[$insertIndex].Trim().Length -ne 0) {
-    $outputLines.Add("")
-}
-
-for ($i = $insertIndex; $i -lt $filteredLines.Count; $i++) {
-    $outputLines.Add($filteredLines[$i])
-}
-
-while ($outputLines.Count -gt 0 -and $outputLines[$outputLines.Count - 1].Trim().Length -eq 0) {
-    $outputLines.RemoveAt($outputLines.Count - 1)
-}
-
-if ($outputLines.Count -gt 0) {
-    $outputLines.Add("")
-}
-
-$outputLines.Add('[model_providers.xixu]')
-$outputLines.Add('name = "Xi Xu''s AI Inference"')
-$outputLines.Add('base_url = "https://api.xi-xu.me/v1"')
-$outputLines.Add('env_key = "XIXU_API_KEY"')
-
-$content = [string]::Join("`r`n", $outputLines) + "`r`n"
-
-Set-Content -Path $ConfigFile -Value $content -Encoding UTF8
-
-$env:XIXU_API_KEY = $ApiKey
-[System.Environment]::SetEnvironmentVariable("XIXU_API_KEY", $ApiKey, "User")
-
-Write-Host "已完成："
-Write-Host "1. 更新 $ConfigFile"
-Write-Host "2. 设置当前会话环境变量 XIXU_API_KEY"
-Write-Host "3. 持久化为用户级环境变量"
-Write-Host ""
-Write-Host '重新打开 PowerShell 后会自动生效。当前会话已可直接使用。'
+Write-Host "`nDone."
+Write-Host "Config: $configFile"
+Write-Host "Credentials: $keyFile (restricted ACL requested)"
+Write-Host "Profile: $profileFile"
+Write-Host 'Restart PowerShell, or run: . $PROFILE'
+Write-Host 'Then run: codex'
