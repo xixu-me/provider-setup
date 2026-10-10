@@ -1,72 +1,125 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+# Configure Claude Code for Xi Xu's AI Inference.
+set -eu
 
-# 用法:
-#   bash setup-claude-xixu.sh your_api_key
-# 或:
-#   ANTHROPIC_AUTH_TOKEN=your_api_key bash setup-claude-xixu.sh
-
-API_KEY="${1:-${ANTHROPIC_AUTH_TOKEN:-}}"
-
-if [[ -z "$API_KEY" ]]; then
-  read -rsp "请输入 API Key: " API_KEY
-  echo
+if [ -z "${HOME:-}" ]; then
+  echo "HOME is not set." >&2
+  exit 1
 fi
 
-SETTINGS_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-SETTINGS_FILE="$SETTINGS_DIR/settings.json"
+claude_dir="$HOME/.claude"
+env_file="$claude_dir/xixu.env"
+default_model="gpt-5.5"
+timestamp=$(date +%Y%m%d%H%M%S)
+stty_orig=""
+tmp_profile=""
 
-mkdir -p "$SETTINGS_DIR"
+cleanup() {
+  if [ -n "$stty_orig" ]; then
+    stty "$stty_orig" 2>/dev/null || true
+    stty_orig=""
+  fi
+  rm -f ${tmp_profile:+"$tmp_profile"}
+}
+trap cleanup 0
+trap 'cleanup; exit 1' HUP INT TERM
 
-python3 - "$SETTINGS_FILE" "$API_KEY" <<'PY'
-import json
-import os
-import sys
+mkdir -p "$claude_dir"
+if [ -f "$env_file" ]; then
+  cp "$env_file" "$env_file.bak.$timestamp"
+fi
 
-settings_file = sys.argv[1]
-api_key = sys.argv[2]
+printf "Enter your Xi Xu API key: "
+if [ -t 0 ]; then
+  stty_orig=$(stty -g 2>/dev/null || true)
+  stty -echo 2>/dev/null || true
+fi
+IFS= read -r api_key
+if [ -n "$stty_orig" ]; then
+  stty "$stty_orig" 2>/dev/null || true
+  stty_orig=""
+  printf "\n"
+fi
 
-data = {}
-if os.path.exists(settings_file):
-    with open(settings_file, "r", encoding="utf-8") as f:
-        content = f.read().strip()
-        if content:
-            data = json.loads(content)
+if [ -z "$api_key" ]; then
+  echo "API key is required." >&2
+  exit 1
+fi
 
-if not isinstance(data, dict):
-    raise SystemExit("settings.json 顶层必须是 JSON 对象")
+escape_single_quotes() {
+  printf "%s" "$1" | sed "s/'/'\\\\''/g"
+}
 
-env = data.get("env")
-if env is None:
-    env = {}
-elif not isinstance(env, dict):
-    raise SystemExit("settings.json 中 env 必须是 JSON 对象")
+api_key_escaped=$(escape_single_quotes "$api_key")
+{
+  printf "XIXU_API_KEY='%s'\n" "$api_key_escaped"
+  printf "XIXU_MODEL='%s'\n" "$default_model"
+} > "$env_file"
+chmod 600 "$env_file"
+unset api_key api_key_escaped
 
-env.update({
-    "ANTHROPIC_AUTH_TOKEN": api_key,
-    "ANTHROPIC_BASE_URL": "https://api.xi-xu.me",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-5.4",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "gpt-5.4",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5.4",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-    "CLAUDE_CODE_SUBAGENT_MODEL": "gpt-5.4"
-})
+shell_name=$(basename "${SHELL:-}")
+case "$shell_name" in
+  zsh) profile="$HOME/.zshrc" ;;
+  bash) profile="$HOME/.bashrc" ;;
+  *) profile="$HOME/.profile" ;;
+esac
 
-data["env"] = env
+touch "$profile"
+cp "$profile" "$profile.bak.$timestamp"
+tmp_profile="$profile.tmp.$$"
+start="# >>> Xi Xu's AI Inference Claude Code >>>"
+end="# <<< Xi Xu's AI Inference Claude Code <<<"
 
-if os.path.exists(settings_file):
-    backup_file = settings_file + ".bak"
-    with open(backup_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+awk -v start="$start" -v end="$end" '
+  $0 == start { skip = 1; next }
+  $0 == end { skip = 0; next }
+  skip != 1 { print }
+' "$profile" > "$tmp_profile"
 
-with open(settings_file, "w", encoding="utf-8") as f:
-    json.dump(data, f, ensure_ascii=False, indent=2)
-    f.write("\n")
+cat >> "$tmp_profile" <<'EOF'
 
-print(f"已更新: {settings_file}")
-PY
+# >>> Xi Xu's AI Inference Claude Code >>>
+unalias claude 2>/dev/null || true
+unset -f claude 2>/dev/null || true
+_xixu_claude_bin=$(command -v claude 2>/dev/null || true)
 
-echo "完成。"
-echo "你可以执行以下命令查看结果："
-echo "cat \"$SETTINGS_FILE\""
+claude() (
+  printf "\nXi Xu's AI Inference\n"
+  printf "%s\n" "----------------------"
+
+  if [ -z "$_xixu_claude_bin" ] || [ ! -x "$_xixu_claude_bin" ]; then
+    echo "Claude Code not found. Install Claude Code first, then restart the terminal." >&2
+    return 127
+  fi
+  if [ ! -r "$HOME/.claude/xixu.env" ]; then
+    echo "Missing $HOME/.claude/xixu.env. Run the setup script again." >&2
+    return 1
+  fi
+
+  . "$HOME/.claude/xixu.env"
+  export ANTHROPIC_BASE_URL="https://api.xi-xu.me"
+  export ANTHROPIC_AUTH_TOKEN="$XIXU_API_KEY"
+  unset ANTHROPIC_API_KEY
+  unset CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY
+  export ANTHROPIC_MODEL="$XIXU_MODEL"
+  export ANTHROPIC_DEFAULT_OPUS_MODEL="$XIXU_MODEL"
+  export ANTHROPIC_DEFAULT_SONNET_MODEL="$XIXU_MODEL"
+  export ANTHROPIC_DEFAULT_HAIKU_MODEL="$XIXU_MODEL"
+  export ANTHROPIC_DEFAULT_FABLE_MODEL="$XIXU_MODEL"
+  export CLAUDE_CODE_SUBAGENT_MODEL="$XIXU_MODEL"
+  export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+  "$_xixu_claude_bin" "$@"
+)
+# <<< Xi Xu's AI Inference Claude Code <<<
+EOF
+
+mv "$tmp_profile" "$profile"
+tmp_profile=""
+
+echo
+echo "Done."
+echo "Credentials: $env_file (mode 600)"
+echo "Profile: $profile"
+echo "Restart your terminal, or run: . \"$profile\""
+echo "Then run: claude"
