@@ -1,104 +1,121 @@
-param(
-    [string]$ApiKey
-)
+# Configure Claude Code for Xi Xu's AI Inference on Windows.
+$ErrorActionPreference = 'Stop'
 
-function ConvertTo-Hashtable {
-    param(
-        [Parameter(ValueFromPipeline = $true)]
-        [object]$InputObject
-    )
+$defaultModel = 'gpt-5.5'
+$timestamp = Get-Date -Format 'yyyyMMddHHmmss'
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
-    if ($null -eq $InputObject) {
-        return $null
-    }
-
-    if ($InputObject -is [System.Collections.IDictionary]) {
-        $table = @{}
-        foreach ($key in $InputObject.Keys) {
-            $table[$key] = ConvertTo-Hashtable $InputObject[$key]
-        }
-        return $table
-    }
-
-    if (
-        $InputObject -is [System.Collections.IEnumerable] -and
-        -not ($InputObject -is [string])
-    ) {
-        $items = @()
-        foreach ($item in $InputObject) {
-            $items += ,(ConvertTo-Hashtable $item)
-        }
-        return $items
-    }
-
-    if ($InputObject -is [psobject]) {
-        $table = @{}
-        foreach ($property in $InputObject.PSObject.Properties) {
-            $table[$property.Name] = ConvertTo-Hashtable $property.Value
-        }
-        return $table
-    }
-
-    return $InputObject
+function Write-Utf8NoBom([string]$Path, [string]$Content) {
+    [System.IO.File]::WriteAllText($Path, $Content, $script:utf8NoBom)
 }
 
-if ([string]::IsNullOrWhiteSpace($ApiKey)) {
-    $secure = Read-Host "请输入 API Key" -AsSecureString
-    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+function Backup-File([string]$Path) {
+    if (Test-Path -LiteralPath $Path) {
+        Copy-Item -LiteralPath $Path -Destination "$Path.bak.$script:timestamp" -Force
+    }
+}
+
+$claudeDir = Join-Path $HOME '.claude'
+$keyFile = Join-Path $claudeDir 'xixu.key'
+$modelFile = Join-Path $claudeDir 'xixu.model'
+New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
+Backup-File $keyFile
+Backup-File $modelFile
+
+$secureKey = Read-Host 'Enter your Xi Xu API key' -AsSecureString
+$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey)
+try {
+    $apiKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+} finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+}
+if ([string]::IsNullOrWhiteSpace($apiKey)) {
+    throw 'API key is required.'
+}
+Write-Utf8NoBom $keyFile $apiKey
+Write-Utf8NoBom $modelFile $defaultModel
+$apiKey = $null
+
+if ($env:OS -eq 'Windows_NT') {
     try {
-        $ApiKey = [Runtime.InteropServices.Marshal]::PtrToStringAuto($ptr)
-    }
-    finally {
-        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
-    }
-}
-
-$SettingsDir = if ([string]::IsNullOrWhiteSpace($env:CLAUDE_CONFIG_DIR)) {
-    Join-Path $HOME ".claude"
-} else {
-    $env:CLAUDE_CONFIG_DIR
-}
-$SettingsFile = Join-Path $SettingsDir "settings.json"
-
-New-Item -ItemType Directory -Force -Path $SettingsDir | Out-Null
-
-$data = @{}
-
-if (Test-Path $SettingsFile) {
-    $raw = Get-Content $SettingsFile -Raw -ErrorAction Stop
-    if (-not [string]::IsNullOrWhiteSpace($raw)) {
-        $parsed = $raw | ConvertFrom-Json
-        $data = ConvertTo-Hashtable $parsed
+        $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        & icacls.exe $keyFile '/inheritance:r' '/grant:r' "*$sid`:(R,W)" | Out-Null
+        & icacls.exe $modelFile '/inheritance:r' '/grant:r' "*$sid`:(R,W)" | Out-Null
+    } catch {
+        Write-Warning "Could not restrict the credential ACL automatically: $($_.Exception.Message)"
     }
 }
 
-if ($data.ContainsKey("env") -and $data["env"] -is [System.Collections.IDictionary]) {
-    $envTable = @{}
-    foreach ($key in $data["env"].Keys) {
-        $envTable[$key] = $data["env"][$key]
+$profileFile = $PROFILE
+$profileDir = Split-Path -Parent $profileFile
+New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+if (-not (Test-Path -LiteralPath $profileFile)) { Write-Utf8NoBom $profileFile '' }
+Backup-File $profileFile
+
+$start = "# >>> Xi Xu's AI Inference Claude Code >>>"
+$end = "# <<< Xi Xu's AI Inference Claude Code <<<"
+$profileText = [System.IO.File]::ReadAllText($profileFile)
+$pattern = "(?ms)^$([regex]::Escape($start))\r?\n.*?^$([regex]::Escape($end))\r?\n?"
+$profileText = [regex]::Replace($profileText, $pattern, '').TrimEnd()
+$profileBlock = @'
+# >>> Xi Xu's AI Inference Claude Code >>>
+Remove-Item Function:\claude -ErrorAction SilentlyContinue
+$script:XiXuClaudeCommand = Get-Command claude -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+
+function global:claude {
+    Write-Host "`nXi Xu's AI Inference"
+    Write-Host '----------------------'
+    if (-not $script:XiXuClaudeCommand) {
+        Write-Error 'Claude Code not found. Install Claude Code first, then restart PowerShell.'
+        return
     }
-} else {
-    $envTable = @{}
+    $keyPath = Join-Path $HOME '.claude\xixu.key'
+    $modelPath = Join-Path $HOME '.claude\xixu.model'
+    if (-not (Test-Path -LiteralPath $keyPath) -or -not (Test-Path -LiteralPath $modelPath)) {
+        Write-Error 'Missing Xi Xu Claude Code configuration. Run the setup script again.'
+        return
+    }
+    $key = [System.IO.File]::ReadAllText($keyPath).Trim()
+    $model = [System.IO.File]::ReadAllText($modelPath).Trim()
+    $names = @(
+        'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
+        'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL',
+        'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_DEFAULT_FABLE_MODEL',
+        'CLAUDE_CODE_SUBAGENT_MODEL', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+        'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY'
+    )
+    $old = @{}
+    foreach ($name in $names) {
+        $old[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    }
+    try {
+        $env:ANTHROPIC_BASE_URL = 'https://api.xi-xu.me'
+        $env:ANTHROPIC_AUTH_TOKEN = $key
+        Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
+        $env:ANTHROPIC_MODEL = $model
+        $env:ANTHROPIC_DEFAULT_OPUS_MODEL = $model
+        $env:ANTHROPIC_DEFAULT_SONNET_MODEL = $model
+        $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = $model
+        $env:ANTHROPIC_DEFAULT_FABLE_MODEL = $model
+        $env:CLAUDE_CODE_SUBAGENT_MODEL = $model
+        $env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1'
+        Remove-Item Env:CLAUDE_CODE_USE_BEDROCK, Env:CLAUDE_CODE_USE_VERTEX, Env:CLAUDE_CODE_USE_FOUNDRY -ErrorAction SilentlyContinue
+        & $script:XiXuClaudeCommand.Source @args
+    } finally {
+        foreach ($name in $names) {
+            [Environment]::SetEnvironmentVariable($name, $old[$name], 'Process')
+        }
+        $key = $null
+    }
 }
+# <<< Xi Xu's AI Inference Claude Code <<<
+'@
+$newProfile = if ($profileText) { "$profileText`r`n`r`n$profileBlock`r`n" } else { "$profileBlock`r`n" }
+Write-Utf8NoBom $profileFile $newProfile
 
-$envTable["ANTHROPIC_AUTH_TOKEN"] = $ApiKey
-$envTable["ANTHROPIC_BASE_URL"] = "https://api.xi-xu.me"
-$envTable["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = "gpt-5.4"
-$envTable["ANTHROPIC_DEFAULT_OPUS_MODEL"] = "gpt-5.4"
-$envTable["ANTHROPIC_DEFAULT_SONNET_MODEL"] = "gpt-5.4"
-$envTable["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
-$envTable["CLAUDE_CODE_SUBAGENT_MODEL"] = "gpt-5.4"
-
-$data["env"] = $envTable
-
-if (Test-Path $SettingsFile) {
-    Copy-Item $SettingsFile "$SettingsFile.bak" -Force
-}
-
-$json = $data | ConvertTo-Json -Depth 100
-Set-Content -Path $SettingsFile -Value $json -Encoding UTF8
-
-Write-Host "已更新: $SettingsFile"
-Write-Host "完成。"
-Write-Host "你可以执行以下命令查看结果："
-Write-Host "Get-Content $SettingsFile"
+Write-Host "`nDone."
+Write-Host "Credentials: $keyFile (restricted ACL requested)"
+Write-Host "Model: $modelFile"
+Write-Host "Profile: $profileFile"
+Write-Host 'Restart PowerShell, or run: . $PROFILE'
+Write-Host 'Then run: claude'
