@@ -1,107 +1,185 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+# Configure Codex CLI for Xi Xu's AI Inference.
+set -eu
 
-# 用法:
-#   bash setup-xixu.sh your_api_key
-# 或:
-#   XIXU_API_KEY=your_api_key bash setup-xixu.sh
+brand="Xi Xu's AI Inference"
+provider_id="xixu"
+base_url="https://api.xi-xu.me/v1"
+env_key="XIXU_API_KEY"
+default_model="gpt-5.5"
 
-API_KEY="${1:-${XIXU_API_KEY:-}}"
-
-if [[ -z "$API_KEY" ]]; then
-  read -rsp "请输入 API Key: " API_KEY
-  echo
+if [ -z "${HOME:-}" ]; then
+  echo "HOME is not set." >&2
+  exit 1
 fi
 
-CONFIG_DIR="${CODEX_HOME:-$HOME/.codex}"
-CONFIG_FILE="$CONFIG_DIR/config.toml"
+codex_dir="$HOME/.codex"
+cfg="$codex_dir/config.toml"
+env_file="$codex_dir/xixu.env"
+timestamp=$(date +%Y%m%d%H%M%S)
+stty_orig=""
+tmp_cfg=""
+top_cfg=""
+rest_cfg=""
+tmp_profile=""
 
-mkdir -p "$CONFIG_DIR"
-touch "$CONFIG_FILE"
+cleanup() {
+  if [ -n "$stty_orig" ]; then
+    stty "$stty_orig" 2>/dev/null || true
+    stty_orig=""
+  fi
+  rm -f ${tmp_cfg:+"$tmp_cfg"} ${top_cfg:+"$top_cfg"} ${rest_cfg:+"$rest_cfg"} ${tmp_profile:+"$tmp_profile"}
+}
+trap cleanup 0
+trap 'cleanup; exit 1' HUP INT TERM
 
-TMP_FILE="$(mktemp)"
+mkdir -p "$codex_dir"
+
+if [ -f "$cfg" ]; then
+  cp "$cfg" "$cfg.bak.$timestamp"
+else
+  : > "$cfg"
+fi
+
+printf "Enter your Xi Xu API key: "
+if [ -t 0 ]; then
+  stty_orig=$(stty -g 2>/dev/null || true)
+  stty -echo 2>/dev/null || true
+fi
+IFS= read -r api_key
+if [ -n "$stty_orig" ]; then
+  stty "$stty_orig" 2>/dev/null || true
+  stty_orig=""
+  printf "\n"
+fi
+
+if [ -z "$api_key" ]; then
+  echo "API key is required." >&2
+  exit 1
+fi
+
+escape_single_quotes() {
+  printf "%s" "$1" | sed "s/'/'\\\\''/g"
+}
+
+api_key_escaped=$(escape_single_quotes "$api_key")
+printf "XIXU_API_KEY='%s'\n" "$api_key_escaped" > "$env_file"
+chmod 600 "$env_file"
+unset api_key api_key_escaped
+
+tmp_cfg="$cfg.tmp.$$"
+top_cfg="$cfg.top.$$"
+rest_cfg="$cfg.rest.$$"
 
 awk '
-BEGIN {
-  in_xixu = 0
-}
-{
-  if (in_xixu) {
-    if ($0 ~ /^\[.*\][[:space:]]*$/) {
-      in_xixu = 0
-    } else {
-      next
+  BEGIN { skip = 0; in_table = 0 }
+  /^[[:space:]]*\[model_providers\.xixu\][[:space:]]*$/ { skip = 1; next }
+  /^[[:space:]]*\[/ { skip = 0; in_table = 1 }
+  skip == 1 { next }
+  in_table == 0 && /^[[:space:]]*(model_provider|model|model_reasoning_effort|service_tier|approval_policy|approvals_reviewer)[[:space:]]*=/ { next }
+  { print }
+' "$cfg" > "$tmp_cfg"
+
+: > "$top_cfg"
+: > "$rest_cfg"
+awk -v top_cfg="$top_cfg" -v rest_cfg="$rest_cfg" '
+  /^[[:space:]]*\[/ { in_tables = 1 }
+  in_tables == 0 { print > top_cfg; next }
+  { print > rest_cfg }
+' "$tmp_cfg"
+
+append_trimmed_file() {
+  awk '
+    NF { seen = 1; last = NR }
+    seen { lines[NR] = $0 }
+    END {
+      for (i = 1; i <= last; i++) {
+        if (i in lines) print lines[i]
+      }
     }
-  }
-
-  if ($0 ~ /^[[:space:]]*model_provider[[:space:]]*=/) {
-    next
-  }
-
-  if ($0 ~ /^\[model_providers\.xixu\][[:space:]]*$/) {
-    in_xixu = 1
-    next
-  }
-
-  if (body_count == 0 && $0 ~ /^[[:space:]]*($|#)/) {
-    lead[++lead_count] = $0
-  } else {
-    body[++body_count] = $0
-  }
+  ' "$1"
 }
-END {
-  for (i = 1; i <= lead_count; i++) {
-    print lead[i]
-  }
 
-  if (lead_count > 0 && lead[lead_count] !~ /^[[:space:]]*$/) {
-    print ""
-  }
+{
+  cat <<EOF
+model_provider = "$provider_id"
+model = "$default_model"
+model_reasoning_effort = "xhigh"
+service_tier = "fast"
+approvals_reviewer = "user"
+EOF
+  if [ -s "$top_cfg" ]; then
+    printf "\n"
+    append_trimmed_file "$top_cfg"
+  fi
+  cat <<EOF
 
-  print "model_provider = \"xixu\""
+[model_providers.$provider_id]
+name = "$brand"
+base_url = "$base_url"
+env_key = "$env_key"
+wire_api = "responses"
+disable_response_storage = true
+EOF
+  if [ -s "$rest_cfg" ]; then
+    printf "\n"
+    append_trimmed_file "$rest_cfg"
+  fi
+} > "$cfg"
 
-  if (body_count > 0 && body[1] !~ /^[[:space:]]*$/) {
-    print ""
-  }
+shell_name=$(basename "${SHELL:-}")
+case "$shell_name" in
+  zsh) profile="$HOME/.zshrc" ;;
+  bash) profile="$HOME/.bashrc" ;;
+  *) profile="$HOME/.profile" ;;
+esac
 
-  for (i = 1; i <= body_count; i++) {
-    print body[i]
-  }
+touch "$profile"
+cp "$profile" "$profile.bak.$timestamp"
+tmp_profile="$profile.tmp.$$"
+start="# >>> Xi Xu's AI Inference Codex >>>"
+end="# <<< Xi Xu's AI Inference Codex <<<"
 
-  print ""
-  print "[model_providers.xixu]"
-  print "name = \"Xi Xu'\''s AI Inference\""
-  print "base_url = \"https://api.xi-xu.me/v1\""
-  print "env_key = \"XIXU_API_KEY\""
-}
-' "$CONFIG_FILE" > "$TMP_FILE"
+awk -v start="$start" -v end="$end" '
+  $0 == start { skip = 1; next }
+  $0 == end { skip = 0; next }
+  skip != 1 { print }
+' "$profile" > "$tmp_profile"
 
-mv "$TMP_FILE" "$CONFIG_FILE"
+cat >> "$tmp_profile" <<'EOF'
 
-export XIXU_API_KEY="$API_KEY"
+# >>> Xi Xu's AI Inference Codex >>>
+unalias codex 2>/dev/null || true
+unset -f codex 2>/dev/null || true
+_xixu_codex_bin=$(command -v codex 2>/dev/null || true)
 
-SHELL_NAME="$(basename "${SHELL:-bash}")"
-if [[ "$SHELL_NAME" == "zsh" ]]; then
-  RC_FILE="$HOME/.zshrc"
-else
-  RC_FILE="$HOME/.bashrc"
-fi
+codex() (
+  printf "\nXi Xu's AI Inference\n"
+  printf "%s\n" "----------------------"
 
-touch "$RC_FILE"
+  if [ -z "$_xixu_codex_bin" ] || [ ! -x "$_xixu_codex_bin" ]; then
+    echo "Codex CLI not found. Install Codex CLI first, then restart the terminal." >&2
+    return 127
+  fi
+  if [ ! -r "$HOME/.codex/xixu.env" ]; then
+    echo "Missing $HOME/.codex/xixu.env. Run the setup script again." >&2
+    return 1
+  fi
 
-if grep -q '^export XIXU_API_KEY=' "$RC_FILE"; then
-  sed -i.bak "s|^export XIXU_API_KEY=.*$|export XIXU_API_KEY=\"$API_KEY\"|" "$RC_FILE"
-else
-  {
-    echo ""
-    echo "# Added for Xi Xu Codex provider"
-    echo "export XIXU_API_KEY=\"$API_KEY\""
-  } >> "$RC_FILE"
-fi
+  . "$HOME/.codex/xixu.env"
+  export XIXU_API_KEY
+  "$_xixu_codex_bin" "$@"
+)
+# <<< Xi Xu's AI Inference Codex <<<
+EOF
 
-echo "已完成："
-echo "1. 更新 $CONFIG_FILE"
-echo "2. 设置当前会话环境变量 XIXU_API_KEY"
-echo "3. 持久化到 $RC_FILE"
+mv "$tmp_profile" "$profile"
+tmp_profile=""
+
 echo
-echo "可执行：source \"$RC_FILE\""
+echo "Done."
+echo "Config: $cfg"
+echo "Credentials: $env_file (mode 600)"
+echo "Profile: $profile"
+echo "Restart your terminal, or run: . \"$profile\""
+echo "Then run: codex"
