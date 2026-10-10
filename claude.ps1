@@ -6,7 +6,8 @@ $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 function Write-Utf8NoBom([string]$Path, [string]$Content) {
-    [System.IO.File]::WriteAllText($Path, $Content, $script:utf8NoBom)
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Content, $encoding)
 }
 
 function Backup-File([string]$Path) {
