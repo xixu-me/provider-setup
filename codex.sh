@@ -5,6 +5,7 @@ set -eu
 brand="Xi Xu's AI Inference"
 provider_id="xixu"
 base_url="https://api.xi-xu.me/v1"
+model_catalog_url="https://api.xi-xu.me/v1/models"
 env_key="XIXU_API_KEY"
 default_model="gpt-5.5"
 
@@ -22,13 +23,14 @@ tmp_cfg=""
 top_cfg=""
 rest_cfg=""
 tmp_profile=""
+tmp_features=""
 
 cleanup() {
   if [ -n "$stty_orig" ]; then
     stty "$stty_orig" 2>/dev/null || true
     stty_orig=""
   fi
-  rm -f ${tmp_cfg:+"$tmp_cfg"} ${top_cfg:+"$top_cfg"} ${rest_cfg:+"$rest_cfg"} ${tmp_profile:+"$tmp_profile"}
+  rm -f ${tmp_cfg:+"$tmp_cfg"} ${top_cfg:+"$top_cfg"} ${rest_cfg:+"$rest_cfg"} ${tmp_profile:+"$tmp_profile"} ${tmp_features:+"$tmp_features"}
 }
 trap cleanup 0
 trap 'cleanup; exit 1' HUP INT TERM
@@ -117,6 +119,7 @@ EOF
 [model_providers.$provider_id]
 name = "$brand"
 base_url = "$base_url"
+model_catalog_url = "$model_catalog_url"
 env_key = "$env_key"
 wire_api = "responses"
 disable_response_storage = true
@@ -126,6 +129,31 @@ EOF
     append_trimmed_file "$rest_cfg"
   fi
 } > "$cfg"
+
+# Ensure Codex model discovery is enabled without duplicate or discarded feature settings.
+tmp_features="$cfg.features.$$"
+awk '
+  BEGIN { in_features = 0; feature_seen = 0; feature_key = 0 }
+  /^[[:space:]]*\[features\][[:space:]]*$/ {
+    if (in_features && !feature_key) { print "api_key_model_discovery = true"; feature_key = 1 }
+    in_features = 1; feature_seen = 1; print; next
+  }
+  /^[[:space:]]*\[/ {
+    if (in_features && !feature_key) { print "api_key_model_discovery = true"; feature_key = 1 }
+    in_features = 0
+  }
+  in_features && /^[[:space:]]*api_key_model_discovery[[:space:]]*=/ {
+    if (!feature_key) print "api_key_model_discovery = true"
+    feature_key = 1; next
+  }
+  { print }
+  END {
+    if (in_features && !feature_key) print "api_key_model_discovery = true"
+    if (!feature_seen) print "\n[features]\napi_key_model_discovery = true"
+  }
+' "$cfg" > "$tmp_features"
+mv "$tmp_features" "$cfg"
+tmp_features=""
 
 shell_name=$(basename "${SHELL:-}")
 case "$shell_name" in

@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 $brand = "Xi Xu's AI Inference"
 $providerId = 'xixu'
 $baseUrl = 'https://api.xi-xu.me/v1'
+$modelCatalogUrl = 'https://api.xi-xu.me/v1/models'
 $envKey = 'XIXU_API_KEY'
 $defaultModel = 'gpt-5.5'
 $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
@@ -102,11 +103,20 @@ $configText += @"
 [model_providers.$providerId]
 name = "$brand"
 base_url = "$baseUrl"
+model_catalog_url = "$modelCatalogUrl"
 env_key = "$envKey"
 wire_api = "responses"
 disable_response_storage = true
 "@
 if ($restText) { $configText += "`n$restText`n" }
+# Ensure Codex model discovery is enabled without duplicate feature keys.
+$configLines = $configText -split [Environment]::NewLine | Where-Object { $_ -notlike '*api_key_model_discovery*' }
+$configText = $configLines -join [Environment]::NewLine
+if ($configText.Contains('[features]')) {
+    $configText = $configText.Replace('[features]', '[features]' + [Environment]::NewLine + 'api_key_model_discovery = true')
+} else {
+    $configText = $configText.TrimEnd() + [Environment]::NewLine + [Environment]::NewLine + '[features]' + [Environment]::NewLine + 'api_key_model_discovery = true' + [Environment]::NewLine
+}
 Write-Utf8NoBom $configFile $configText
 
 $profileFile = $PROFILE
