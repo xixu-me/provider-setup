@@ -7,7 +7,8 @@ if [ -z "${HOME:-}" ]; then
   exit 1
 fi
 
-claude_dir="$HOME/.claude"
+SETTINGS_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+claude_dir="$SETTINGS_DIR"
 env_file="$claude_dir/xixu.env"
 default_model="gpt-5.5"
 timestamp=$(date +%Y%m%d%H%M%S)
@@ -92,12 +93,13 @@ claude() (
     echo "Claude Code not found. Install Claude Code first, then restart the terminal." >&2
     return 127
   fi
-  if [ ! -r "$HOME/.claude/xixu.env" ]; then
-    echo "Missing $HOME/.claude/xixu.env. Run the setup script again." >&2
+  _xixu_claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  if [ ! -r "$_xixu_claude_dir/xixu.env" ]; then
+    echo "Missing $_xixu_claude_dir/xixu.env. Run the setup script again." >&2
     return 1
   fi
 
-  . "$HOME/.claude/xixu.env"
+  . "$_xixu_claude_dir/xixu.env"
   export ANTHROPIC_BASE_URL="https://api.xi-xu.me"
   export ANTHROPIC_AUTH_TOKEN="$XIXU_API_KEY"
   unset ANTHROPIC_API_KEY

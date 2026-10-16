@@ -16,7 +16,8 @@ function Backup-File([string]$Path) {
     }
 }
 
-$claudeDir = Join-Path $HOME '.claude'
+$SettingsDir = if ([string]::IsNullOrWhiteSpace($env:CLAUDE_CONFIG_DIR)) { Join-Path $HOME ".claude" } else { $env:CLAUDE_CONFIG_DIR }
+$claudeDir = $SettingsDir
 $keyFile = Join-Path $claudeDir 'xixu.key'
 $modelFile = Join-Path $claudeDir 'xixu.model'
 New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
@@ -70,8 +71,9 @@ function global:claude {
         Write-Error 'Claude Code not found. Install Claude Code first, then restart PowerShell.'
         return
     }
-    $keyPath = Join-Path $HOME '.claude\xixu.key'
-    $modelPath = Join-Path $HOME '.claude\xixu.model'
+    $claudeConfigDir = if ([string]::IsNullOrWhiteSpace($env:CLAUDE_CONFIG_DIR)) { Join-Path $HOME ".claude" } else { $env:CLAUDE_CONFIG_DIR }
+    $keyPath = Join-Path $claudeConfigDir 'xixu.key'
+    $modelPath = Join-Path $claudeConfigDir 'xixu.model'
     if (-not (Test-Path -LiteralPath $keyPath) -or -not (Test-Path -LiteralPath $modelPath)) {
         Write-Error 'Missing Xi Xu Claude Code configuration. Run the setup script again.'
         return

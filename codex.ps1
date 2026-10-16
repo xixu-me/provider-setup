@@ -21,7 +21,8 @@ function Backup-File([string]$Path) {
     }
 }
 
-$codexDir = Join-Path $HOME '.codex'
+$ConfigDir = if ([string]::IsNullOrWhiteSpace($env:CODEX_HOME)) { Join-Path $HOME ".codex" } else { $env:CODEX_HOME }
+$codexDir = $ConfigDir
 $configFile = Join-Path $codexDir 'config.toml'
 $keyFile = Join-Path $codexDir 'xixu.key'
 New-Item -ItemType Directory -Path $codexDir -Force | Out-Null
@@ -142,7 +143,8 @@ function global:codex {
         Write-Error 'Codex CLI not found. Install Codex CLI first, then restart PowerShell.'
         return
     }
-    $keyPath = Join-Path $HOME '.codex\xixu.key'
+    $codexHome = if ([string]::IsNullOrWhiteSpace($env:CODEX_HOME)) { Join-Path $HOME ".codex" } else { $env:CODEX_HOME }
+    $keyPath = Join-Path $codexHome 'xixu.key'
     if (-not (Test-Path -LiteralPath $keyPath)) {
         Write-Error "Missing $keyPath. Run the setup script again."
         return

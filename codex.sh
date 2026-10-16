@@ -14,7 +14,8 @@ if [ -z "${HOME:-}" ]; then
   exit 1
 fi
 
-codex_dir="$HOME/.codex"
+CONFIG_DIR="${CODEX_HOME:-$HOME/.codex}"
+codex_dir="$CONFIG_DIR"
 cfg="$codex_dir/config.toml"
 env_file="$codex_dir/xixu.env"
 timestamp=$(date +%Y%m%d%H%M%S)
@@ -189,12 +190,13 @@ codex() (
     echo "Codex CLI not found. Install Codex CLI first, then restart the terminal." >&2
     return 127
   fi
-  if [ ! -r "$HOME/.codex/xixu.env" ]; then
-    echo "Missing $HOME/.codex/xixu.env. Run the setup script again." >&2
+  _xixu_codex_home="${CODEX_HOME:-$HOME/.codex}"
+  if [ ! -r "$_xixu_codex_home/xixu.env" ]; then
+    echo "Missing $_xixu_codex_home/xixu.env. Run the setup script again." >&2
     return 1
   fi
 
-  . "$HOME/.codex/xixu.env"
+  . "$_xixu_codex_home/xixu.env"
   export XIXU_API_KEY
   "$_xixu_codex_bin" "$@"
 )
